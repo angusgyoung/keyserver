@@ -17,25 +17,26 @@
 
 'use strict';
 
-const log = require('winston');
 const MongoClient = require('mongodb').MongoClient;
+const { connect } = require('./initConnection');
 
 /**
  * A simple wrapper around the official MongoDB client.
  */
 class Mongo {
+
   /**
    * Initializes the database client by connecting to the MongoDB.
    * @param {String} uri    The mongodb uri
-   * @param {String} user   The databse user
-   * @param {String} pass   The database user's password
    * @yield {undefined}
    */
-  async init({uri, user, pass}) {
-    log.info('mongo', 'Connecting to MongoDB ...');
-    const url = `mongodb://${user}:${pass}@${uri}`;
-    this._client = await MongoClient.connect(url, {useNewUrlParser: true});
-    this._db = this._client.db();
+  *init(options) {
+    let uri = 'mongodb://' + options.uri;
+    console.log(uri);
+    connect(uri).then(db => {
+      this._db = db;
+      console.log('Connected', this._db);
+    });
   }
 
   /**
@@ -43,7 +44,7 @@ class Mongo {
    * @yield {undefined}
    */
   disconnect() {
-    return this._client.close();
+    return this._db.close();
   }
 
   /**
@@ -53,7 +54,7 @@ class Mongo {
    * @yield {Object}            The operation result
    */
   create(document, type) {
-    const col = this._db.collection(type);
+    let col = this._db.collection(type);
     return col.insertOne(document);
   }
 
@@ -64,7 +65,7 @@ class Mongo {
    * @yield {Object}             The operation result
    */
   batch(documents, type) {
-    const col = this._db.collection(type);
+    let col = this._db.collection(type);
     return col.insertMany(documents);
   }
 
@@ -76,8 +77,8 @@ class Mongo {
    * @yield {Object}         The operation result
    */
   update(query, diff, type) {
-    const col = this._db.collection(type);
-    return col.updateOne(query, {$set: diff});
+    let col = this._db.collection(type);
+    return col.updateOne(query, { $set: diff });
   }
 
   /**
@@ -87,7 +88,7 @@ class Mongo {
    * @yield {Object}         The document object
    */
   get(query, type) {
-    const col = this._db.collection(type);
+    let col = this._db.collection(type);
     return col.findOne(query);
   }
 
@@ -98,7 +99,7 @@ class Mongo {
    * @yield {Array}          An array of document objects
    */
   list(query, type) {
-    const col = this._db.collection(type);
+    let col = this._db.collection(type);
     return col.find(query).toArray();
   }
 
@@ -109,7 +110,7 @@ class Mongo {
    * @yield {Object}         The operation result
    */
   remove(query, type) {
-    const col = this._db.collection(type);
+    let col = this._db.collection(type);
     return col.deleteMany(query);
   }
 
@@ -119,9 +120,10 @@ class Mongo {
    * @yield {Object}        The operation result
    */
   clear(type) {
-    const col = this._db.collection(type);
+    let col = this._db.collection(type);
     return col.deleteMany({});
   }
+
 }
 
 module.exports = Mongo;

@@ -24,6 +24,7 @@ const util = require('../service/util');
  * The REST api to provide additional functionality on top of HKP
  */
 class REST {
+
   /**
    * Create an instance of the REST server
    * @param  {Object} publicKey   An instance of the public key service
@@ -34,16 +35,17 @@ class REST {
   }
 
   /**
-   * Public key / user ID upload via http POST
+   * Public key upload via http POST
    * @param  {Object} ctx   The koa request/response context
    */
-  async create(ctx) {
-    const {emails, publicKeyArmored} = await parse.json(ctx, {limit: '1mb'});
-    if (!publicKeyArmored) {
+  *create(ctx) {
+    let q = yield parse.json(ctx, { limit: '1mb' });
+    let publicKeyArmored = q.publicKeyArmored, primaryEmail = q.primaryEmail;
+    if (!publicKeyArmored || (primaryEmail && !util.isEmail(primaryEmail))) {
       ctx.throw(400, 'Invalid request!');
     }
-    const origin = util.origin(ctx);
-    await this._publicKey.put({emails, publicKeyArmored, origin}, ctx);
+    let origin = util.origin(ctx);
+    yield this._publicKey.put({ publicKeyArmored, primaryEmail, origin });
     ctx.body = 'Upload successful. Check your inbox to verify your email address.';
     ctx.status = 201;
   }
@@ -52,45 +54,46 @@ class REST {
    * Public key query via http GET
    * @param  {Object} ctx   The koa request/response context
    */
-  async query(ctx) {
-    const op = ctx.query.op;
+  *query(ctx) {
+    let op = ctx.query.op;
     if (op === 'verify' || op ===  'verifyRemove') {
-      return this[op](ctx); // delegate operation
+      return yield this[op](ctx); // delegate operation
     }
     // do READ if no 'op' provided
-    const q = {keyId: ctx.query.keyId, fingerprint: ctx.query.fingerprint, email: ctx.query.email};
+    let q = { keyId:ctx.query.keyId, fingerprint:ctx.query.fingerprint, email:ctx.query.email };
     if (!util.isKeyId(q.keyId) && !util.isFingerPrint(q.fingerprint) && !util.isEmail(q.email)) {
       ctx.throw(400, 'Invalid request!');
     }
-    ctx.body = await this._publicKey.get(q, ctx);
+    ctx.body = yield this._publicKey.get(q);
   }
 
   /**
    * Verify a public key's user id via http GET
    * @param  {Object} ctx   The koa request/response context
    */
-  async verify(ctx) {
-    const q = {keyId: ctx.query.keyId, nonce: ctx.query.nonce};
+  *verify(ctx) {
+    let q = { keyId:ctx.query.keyId, nonce:ctx.query.nonce };
     if (!util.isKeyId(q.keyId) || !util.isString(q.nonce)) {
       ctx.throw(400, 'Invalid request!');
     }
-    const {email} = await this._publicKey.verify(q);
+    yield this._publicKey.verify(q);
     // create link for sharing
-    const link = util.url(util.origin(ctx), `/pks/lookup?op=get&search=${email}`);
-    await ctx.render('verify-success', {email, link});
+    let link = util.url(util.origin(ctx), '/pks/lookup?op=get&search=0x' + q.keyId.toUpperCase());
+    ctx.body = `<p>Email address successfully verified!</p><p>Link to share your key: <a href="${link}" target="_blank">${link}</a></p>`;
+    ctx.set('Content-Type', 'text/html; charset=utf-8');
   }
 
   /**
    * Request public key removal via http DELETE
    * @param  {Object} ctx   The koa request/response context
    */
-  async remove(ctx) {
-    const q = {keyId: ctx.query.keyId, email: ctx.query.email, origin: util.origin(ctx)};
+  *remove(ctx) {
+    let q = { keyId:ctx.query.keyId, email:ctx.query.email, origin:util.origin(ctx) };
     if (!util.isKeyId(q.keyId) && !util.isEmail(q.email)) {
       ctx.throw(400, 'Invalid request!');
     }
-    await this._publicKey.requestRemove(q, ctx);
-    ctx.body = 'Check your inbox to verify the removal of your email address.';
+    yield this._publicKey.requestRemove(q);
+    ctx.body = 'Check your inbox to verify the removal of your key.';
     ctx.status = 202;
   }
 
@@ -98,14 +101,15 @@ class REST {
    * Verify public key removal via http GET
    * @param  {Object} ctx   The koa request/response context
    */
-  async verifyRemove(ctx) {
-    const q = {keyId: ctx.query.keyId, nonce: ctx.query.nonce};
+  *verifyRemove(ctx) {
+    let q = { keyId:ctx.query.keyId, nonce:ctx.query.nonce };
     if (!util.isKeyId(q.keyId) || !util.isString(q.nonce)) {
       ctx.throw(400, 'Invalid request!');
     }
-    const {email} = await this._publicKey.verifyRemove(q);
-    await ctx.render('removal-success', {email});
+    yield this._publicKey.verifyRemove(q);
+    ctx.body = 'Key successfully removed!';
   }
+
 }
 
 module.exports = REST;

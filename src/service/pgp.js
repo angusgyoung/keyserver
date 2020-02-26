@@ -17,9 +17,10 @@
 
 'use strict';
 
-const log = require('winston');
+const log = require('npmlog');
 const util = require('./util');
 const openpgp = require('openpgp');
+const addressparser = require('addressparser');
 
 const KEY_BEGIN = '-----BEGIN PGP PUBLIC KEY BLOCK-----';
 const KEY_END = '-----END PGP PUBLIC KEY BLOCK-----';
@@ -28,22 +29,18 @@ const KEY_END = '-----END PGP PUBLIC KEY BLOCK-----';
  * A simple wrapper around OpenPGP.js
  */
 class PGP {
-  constructor() {
-    openpgp.config.show_version = false;
-    openpgp.config.show_comment = false;
-  }
 
   /**
    * Parse an ascii armored pgp key block and get its parameters.
    * @param  {String} publicKeyArmored   ascii armored pgp key block
    * @return {Object}                    public key document to persist
    */
-  async parseKey(publicKeyArmored) {
+  parseKey(publicKeyArmored) {
     publicKeyArmored = this.trimKey(publicKeyArmored);
 
-    const r = await openpgp.key.readArmored(publicKeyArmored);
+    let r = openpgp.key.readArmored(publicKeyArmored);
     if (r.err) {
-      const error = r.err[0];
+      let error = r.err[0];
       log.error('pgp', 'Failed to parse PGP key:\n%s', publicKeyArmored, error);
       util.throw(500, 'Failed to parse PGP key');
     } else if (!r.keys || r.keys.length !== 1 || !r.keys[0].primaryKey) {
@@ -51,29 +48,24 @@ class PGP {
     }
 
     // verify primary key
-    const key = r.keys[0];
-    const primaryKey = key.primaryKey;
-    const now = new Date();
-    const verifyDate = primaryKey.created > now ? primaryKey.created : now;
-    if (await key.verifyPrimaryKey(verifyDate) !== openpgp.enums.keyStatus.valid) {
+    let key = r.keys[0];
+    let primaryKey = key.primaryKey;
+    if (key.verifyPrimaryKey() !== openpgp.enums.keyStatus.valid) {
       util.throw(400, 'Invalid PGP key: primary key verification failed');
     }
 
     // accept version 4 keys only
-    const keyId = primaryKey.getKeyId().toHex();
-    const fingerprint = primaryKey.getFingerprint();
+    let keyId = primaryKey.getKeyId().toHex();
+    let fingerprint = primaryKey.fingerprint;
     if (!util.isKeyId(keyId) || !util.isFingerPrint(fingerprint)) {
       util.throw(400, 'Invalid PGP key: only v4 keys are accepted');
     }
 
     // check for at least one valid user id
-    const userIds = await this.parseUserIds(key.users, primaryKey, verifyDate);
+    let userIds = this.parseUserIds(key.users, primaryKey);
     if (!userIds.length) {
-      util.throw(400, 'Invalid PGP key: invalid user IDs');
+      util.throw(400, 'Invalid PGP key: invalid user ids');
     }
-
-    // get algorithm details from primary key
-    const keyInfo = key.primaryKey.getAlgorithmInfo();
 
     // public key document that is stored in the database
     return {
@@ -81,9 +73,8 @@ class PGP {
       fingerprint,
       userIds,
       created: primaryKey.created,
-      uploaded: new Date(),
-      algorithm: keyInfo.algorithm,
-      keySize: keyInfo.bits,
+      algorithm: primaryKey.algorithm,
+      keySize: primaryKey.getBitSize(),
       publicKeyArmored
     };
   }
@@ -117,80 +108,34 @@ class PGP {
   /**
    * Parse an array of user ids and verify signatures
    * @param  {Array} users   A list of openpgp.js user objects
-   * @param {Object} primaryKey The primary key packet of the key
-   * @param {Date} verifyDate Verify user IDs at this point in time
    * @return {Array}         An array of user id objects
    */
-  async parseUserIds(users, primaryKey, verifyDate = new Date()) {
+  parseUserIds(users, primaryKey) {
     if (!users || !users.length) {
-      util.throw(400, 'Invalid PGP key: no user ID found');
+      util.throw(400, 'Invalid PGP key: no user id found');
     }
-    // at least one user id must be valid, revoked or expired
-    const result = [];
-    for (const user of users) {
-      const userStatus = await user.verify(primaryKey, verifyDate);
-      if (userStatus !== openpgp.enums.keyStatus.invalid && user.userId && user.userId.userid) {
-        try {
-          const uid = openpgp.util.parseUserId(user.userId.userid);
-          if (util.isEmail(uid.email)) {
-            // map to local user id object format
-            result.push({
-              status: userStatus,
-              name: uid.name,
-              email: util.normalizeEmail(uid.email),
-              verified: false
-            });
-          }
-        } catch (e) {}
+    // at least one user id signature must be valid
+    let result = [];
+    for (let user of users) {
+      let oneValid = false;
+      for (let cert of user.selfCertifications) {
+        if (user.isValidSelfCertificate(primaryKey, cert)) {
+          oneValid = true;
+        }
+      }
+      if (oneValid && user.userId && user.userId.userid) {
+        let uid = addressparser(user.userId.userid)[0];
+        if (util.isEmail(uid.address)) {
+          result.push(uid);
+        }
       }
     }
-    return result;
-  }
-
-  /**
-   * Remove user IDs from armored key block which are not in array of user IDs
-   * @param  {Array} userIds  user IDs to be kept
-   * @param  {String} armored armored key block to be filtered
-   * @return {String}         filtered amored key block
-   */
-  async filterKeyByUserIds(userIds, armored) {
-    const emails = userIds.map(({email}) => email);
-    const {keys: [key]} = await openpgp.key.readArmored(armored);
-    key.users = key.users.filter(({userId}) => !userId || emails.includes(util.normalizeEmail(userId.email)));
-    return key.armor();
-  }
-
-  /**
-   * Merge (update) armored key blocks
-   * @param  {String} srcArmored source amored key block
-   * @param  {String} dstArmored destination armored key block
-   * @return {String}            merged armored key block
-   */
-  async updateKey(srcArmored, dstArmored) {
-    const {keys: [srcKey], err: srcErr} = await openpgp.key.readArmored(srcArmored);
-    if (srcErr) {
-      log.error('pgp', 'Failed to parse source PGP key for update:\n%s', srcArmored, srcErr);
-      util.throw(500, 'Failed to parse PGP key');
-    }
-    const {keys: [dstKey], err: dstErr} = await openpgp.key.readArmored(dstArmored);
-    if (dstErr) {
-      log.error('pgp', 'Failed to parse destination PGP key for update:\n%s', dstArmored, dstErr);
-      util.throw(500, 'Failed to parse PGP key');
-    }
-    await dstKey.update(srcKey);
-    return dstKey.armor();
-  }
-
-  /**
-   * Remove user ID from armored key block
-   * @param  {String} email            email of user ID to be removed
-   * @param  {String} publicKeyArmored amored key block to be filtered
-   * @return {String}                  filtered armored key block
-   */
-  async removeUserId(email, publicKeyArmored) {
-    const {keys: [key]} = await openpgp.key.readArmored(publicKeyArmored);
-    key.users = key.users.filter(({userId}) => !userId || util.normalizeEmail(userId.email) !== email);
-    return key.armor();
+    // map to local user id object format
+    return result.map(uid => ({
+      name: uid.name,
+      email: uid.address.toLowerCase(),
+      verified: false
+    }));
   }
 }
 

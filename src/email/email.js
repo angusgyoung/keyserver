@@ -17,15 +17,16 @@
 
 'use strict';
 
-const log = require('winston');
+const log = require('npmlog');
 const util = require('../service/util');
-const openpgp = require('openpgp');
 const nodemailer = require('nodemailer');
+const openpgpEncrypt = require('nodemailer-openpgp').openpgpEncrypt;
 
 /**
  * A simple wrapper around Nodemailer to send verification emails
  */
 class Email {
+
   /**
    * Create an instance of the reusable nodemailer SMTP transport.
    * @param {string}  host       SMTP server's hostname: 'smtp.gmail.com'
@@ -36,85 +37,86 @@ class Email {
    * @param {boolean} starttls   (optional) force STARTTLS to prevent downgrade attack. Defaults to true.
    * @param {boolean} pgp        (optional) if outgoing emails are encrypted to the user's public key.
    */
-  init({host, port = 465, auth, tls, starttls, pgp, sender}) {
-    this._transporter = nodemailer.createTransport({
-      host,
-      port,
-      auth,
-      secure: (tls !== undefined) ? util.isTrue(tls) : true,
-      requireTLS: (starttls !== undefined) ? util.isTrue(starttls) : true,
+  init(options) {
+    this._transport = nodemailer.createTransport({
+      host: options.host,
+      port: options.port || 465,
+      auth: options.auth,
+      secure: (options.tls !== undefined) ? util.isTrue(options.tls) : true,
+      requireTLS: (options.starttls !== undefined) ? util.isTrue(options.starttls) : true,
     });
-    this._usePGPEncryption = util.isTrue(pgp);
-    this._sender = sender;
+    if (util.isTrue(options.pgp)) {
+      this._transport.use('stream', openpgpEncrypt());
+    }
+    this._sender = options.sender;
   }
 
   /**
    * Send the verification email to the user using a template.
-   * @param {Object} template   the email template function to use
-   * @param {Object} userId     recipient user id object: { name:'Jon Smith', email:'j@smith.com', publicKeyArmored:'...' }
+   * @param {Object} template   the email template to use
+   * @param {Object} userId     user id document
    * @param {string} keyId      key id of public key
    * @param {Object} origin     origin of the server
-   * @yield {Object}            reponse object containing SMTP info
+   * @yield {Object}            send response from the SMTP server
    */
-  async send({template, userId, keyId, origin, publicKeyArmored}) {
-    const compiled = template({
-      ...userId,
-      origin,
-      keyId
-    });
-    if (this._usePGPEncryption && publicKeyArmored) {
-      compiled.text = await this._pgpEncrypt(compiled.text, publicKeyArmored);
-    }
-    const sendOptions = {
-      from: {name: this._sender.name, address: this._sender.email},
-      to: {name: userId.name, address: userId.email},
-      subject: compiled.subject,
-      text: compiled.text
+  *send(options) {
+    let template = options.template, userId = options.userId, keyId = options.keyId, origin = options.origin;
+    let message = {
+      from: this._sender,
+      to: userId,
+      subject: template.subject,
+      text: template.text,
+      html: template.html,
+      params: {
+        name: userId.name,
+        baseUrl: util.url(origin),
+        keyId: keyId,
+        nonce: userId.nonce
+      }
     };
-    return this._sendHelper(sendOptions);
-  }
-
-  /**
-   * Encrypt the message body using OpenPGP.js
-   * @param  {string} plaintext          the plaintext message body
-   * @param  {string} publicKeyArmored   the recipient's public key
-   * @return {string}                    the encrypted PGP message block
-   */
-  async _pgpEncrypt(plaintext, publicKeyArmored) {
-    const {keys: [key], err} = await openpgp.key.readArmored(publicKeyArmored);
-    if (err) {
-      log.error('email', 'Reading armored key failed.', err, publicKeyArmored);
-    }
-    const now = new Date();
-    // set message creation date if key has been created with future creation date
-    const msgCreationDate = key.primaryKey.created > now ? key.primaryKey.created : now;
-    try {
-      const ciphertext = await openpgp.encrypt({
-        message: openpgp.message.fromText(plaintext),
-        publicKeys: key,
-        date: msgCreationDate
-      });
-      return ciphertext.data;
-    } catch (error) {
-      log.error('email', 'Encrypting message failed.', error, publicKeyArmored);
-      util.throw(400, 'Encrypting message for verification email failed.', error);
-    }
+    return yield this._sendHelper(message);
   }
 
   /**
    * A generic method to send an email message via nodemailer.
-   * @param {Object} sendoptions object: { from: ..., to: ..., subject: ..., text: ... }
+   * @param {Object} from      sender user id object: { name:'Jon Smith', email:'j@smith.com' }
+   * @param {Object} to        recipient user id object: { name:'Jon Smith', email:'j@smith.com' }
+   * @param {string} subject   message subject
+   * @param {string} text      message plaintext body template
+   * @param {string} html      message html body template
+   * @param {Object} params    (optional) nodermailer template parameters
    * @yield {Object}           reponse object containing SMTP info
    */
-  async _sendHelper(sendOptions) {
+  *_sendHelper(options) {
+    let template = {
+      subject: options.subject,
+      text: options.text,
+      html: options.html,
+      encryptionKeys: [options.to.publicKeyArmored]
+    };
+    let sender = {
+      from: {
+        name: options.from.name,
+        address: options.from.email
+      }
+    };
+    let recipient = {
+      to: {
+        name: options.to.name,
+        address: options.to.email
+      }
+    };
+    let params = options.params || {};
+
     try {
-      const info = await this._transporter.sendMail(sendOptions);
+      let sendFn = this._transport.templateSender(template, sender);
+      let info = yield sendFn(recipient, params);
       if (!this._checkResponse(info)) {
         log.warn('email', 'Message may not have been received.', info);
       }
       return info;
-    } catch (error) {
-      log.error('email', 'Sending message failed.', error);
+    } catch(error) {
+      log.error('email', 'Sending message failed.', error, options);
       util.throw(500, 'Sending email to user failed');
     }
   }
@@ -128,6 +130,7 @@ class Email {
   _checkResponse(info) {
     return /^2/.test(info.response);
   }
+
 }
 
 module.exports = Email;

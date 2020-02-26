@@ -1,14 +1,7 @@
-'use strict';
-
 module.exports = {
 
   log: {
-    level: process.env.LOG_LEVEL || 'silly'
-  },
-
-  papertrail: {
-    host: process.env.PAPERTRAIL_HOST,
-    port: process.env.PAPERTRAIL_PORT
+    level: 'silly'
   },
 
   server: {
@@ -38,10 +31,6 @@ module.exports = {
       name: process.env.SENDER_NAME,
       email: process.env.SENDER_EMAIL
     }
-  },
-
-  publicKey: {
-    purgeTimeInDays: process.env.PUBLIC_KEY_PURGE_TIME || 30
   }
 
 };

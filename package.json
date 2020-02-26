@@ -1,47 +1,43 @@
 {
   "name": "mailvelope-keyserver",
-  "version": "3.0.0",
+  "version": "1.2.6",
   "license": "AGPL-3.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/mailvelope/keyserver.git"
   },
   "engines": {
-    "node": ">=10",
-    "npm": ">=6"
+    "node": ">=4"
   },
   "scripts": {
-    "start": "node index.js",
-    "test": "npm run test:lint && npm run test:unit && npm run test:integration",
-    "test:lint": "eslint --ignore-pattern \"**/*.min.js\" config src test *.js",
-    "test:unit": "mocha --opts test/mocha.opts ./test/unit/",
-    "test:integration": "mocha --exit --opts test/mocha.opts ./test/integration",
-    "release": "npm run release:install && npm run release:archive",
-    "release:install": "rm -rf node_modules/ && npm ci --production",
-    "release:archive": "zip -rq release.zip package.json package-lock.json node_modules/ *.js src/ config/ locales/"
+    "start": ": ${NODE_ENV=development} && node index.js",
+    "test": ": ${NODE_ENV=development} && grunt test"
   },
   "dependencies": {
-    "co-body": "6.0.0",
-    "config": "3.2.2",
-    "koa": "2.7.0",
-    "koa-ejs": "4.2.0",
-    "koa-locales": "1.12.0",
-    "koa-router": "7.4.0",
-    "koa-static": "5.0.0",
-    "mongodb": "3.2.7",
-    "nodemailer": "6.3.0",
-    "openpgp": "4.5.5",
-    "winston": "3.2.1",
-    "winston-papertrail": "1.0.5"
+    "addressparser": "^1.0.1",
+    "co": "^4.6.0",
+    "co-body": "^4.2.0",
+    "config": "^1.20.4",
+    "kcors": "^1.2.0",
+    "koa": "^1.2.0",
+    "koa-router": "^5.4.0",
+    "koa-static": "^2.0.0",
+    "mongodb": "^2.1.20",
+    "nodemailer": "^2.4.2",
+    "nodemailer-openpgp": "^1.0.2",
+    "npmlog": "^2.0.4",
+    "openpgp": "^2.3.0",
+    "promise-retry": "^1.1.1"
   },
   "devDependencies": {
-    "bootstrap": "^3.4.1",
-    "chai": "^4.1.1",
-    "chai-as-promised": "^7.1.1",
-    "eslint": "^6.1.0",
-    "jquery": "^3.4.1",
-    "mocha": "^6.2.0",
-    "sinon": "^7.4.1",
-    "supertest": "^4.0.2"
+    "chai": "^3.5.0",
+    "co-mocha": "^1.1.2",
+    "grunt": "^1.0.1",
+    "grunt-contrib-jshint": "^1.0.0",
+    "grunt-jscs": "^2.8.0",
+    "grunt-mocha-test": "^0.12.7",
+    "mocha": "^2.5.3",
+    "sinon": "^1.17.4",
+    "supertest": "^1.2.0"
   }
 }

@@ -1,64 +1,59 @@
 'use strict';
 
+require('co-mocha')(require('mocha')); // monkey patch mocha for generators
+
 const request = require('supertest');
 const Mongo = require('../../src/dao/mongo');
 const nodemailer = require('nodemailer');
-const templates = require('../../src/email/templates');
 const config = require('config');
 const fs = require('fs');
-const log = require('winston');
+const expect = require('chai').expect;
+const sinon = require('sinon');
 
 describe('Koa App (HTTP Server) Integration Tests', function() {
   this.timeout(20000);
 
-  const sandbox = sinon.createSandbox();
-  let app;
-  let mongo;
-  let sendEmailStub;
-  let publicKeyArmored;
-  let emailParams;
+  let app, mongo,
+    sendEmailStub, publicKeyArmored, emailParams;
 
   const DB_TYPE_PUB_KEY = 'publickey';
   const DB_TYPE_USER_ID = 'userid';
   const primaryEmail = 'safewithme.testuser@gmail.com';
   const fingerprint = '4277257930867231CE393FB8DBC0B3D92B1B86E9';
 
-  before(async () => {
-    sandbox.stub(log);
-
-    publicKeyArmored = fs.readFileSync(`${__dirname}/../fixtures/key1.asc`, 'utf8');
+  before(function *() {
+    publicKeyArmored = fs.readFileSync(__dirname + '/../key1.asc', 'utf8');
     mongo = new Mongo();
-    await mongo.init(config.mongo);
+    yield mongo.init(config.mongo);
 
-    const paramMatcher = sinon.match(params => {
+    sendEmailStub = sinon.stub().returns(Promise.resolve({ response:'250' }));
+    sendEmailStub.withArgs(sinon.match(recipient => {
+      return recipient.to.address === primaryEmail;
+    }), sinon.match(params => {
       emailParams = params;
-      return Boolean(params.nonce);
-    });
-    const ctxMatcher = sinon.match(ctx => Boolean(ctx));
-    sandbox.spy(templates, 'verifyKey').withArgs(ctxMatcher, paramMatcher);
-    sandbox.spy(templates, 'verifyRemove').withArgs(ctxMatcher, paramMatcher);
-
-    sendEmailStub = sandbox.stub().returns(Promise.resolve({response: '250'}));
-    sendEmailStub.withArgs(sinon.match(sendOptions => sendOptions.to.address === primaryEmail));
-    sandbox.stub(nodemailer, 'createTransport').returns({
-      sendMail: sendEmailStub
+      return !!params.nonce;
+    }));
+    sinon.stub(nodemailer, 'createTransport').returns({
+      templateSender: () => { return sendEmailStub; },
+      use: function() {}
     });
 
-    const init = require('../../src/app');
-    app = await init();
+    global.testing = true;
+    let init = require('../../src/app');
+    app = yield init();
   });
 
-  beforeEach(async () => {
-    await mongo.clear(DB_TYPE_PUB_KEY);
-    await mongo.clear(DB_TYPE_USER_ID);
+  beforeEach(function *() {
+    yield mongo.clear(DB_TYPE_PUB_KEY);
+    yield mongo.clear(DB_TYPE_USER_ID);
     emailParams = null;
   });
 
-  after(async () => {
-    sandbox.restore();
-    await mongo.clear(DB_TYPE_PUB_KEY);
-    await mongo.clear(DB_TYPE_USER_ID);
-    await mongo.disconnect();
+  after(function *() {
+    nodemailer.createTransport.restore();
+    yield mongo.clear(DB_TYPE_PUB_KEY);
+    yield mongo.clear(DB_TYPE_USER_ID);
+    yield mongo.disconnect();
   });
 
   describe('REST api', () => {
@@ -66,15 +61,34 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       it('should return 400 for an invalid pgp key', done => {
         request(app.listen())
         .post('/api/v1/key')
-        .send({publicKeyArmored: 'foo'})
+        .send({ publicKeyArmored:'foo' })
         .expect(400)
         .end(done);
       });
 
-      it('should return 201', done => {
+      it('should return 400 for an invalid primaryEmail', done => {
         request(app.listen())
         .post('/api/v1/key')
-        .send({publicKeyArmored})
+        .send({ publicKeyArmored, primaryEmail:'foo' })
+        .expect(400)
+        .end(done);
+      });
+
+      it('should return 201 with primaryEmail', done => {
+        request(app.listen())
+        .post('/api/v1/key')
+        .send({ publicKeyArmored, primaryEmail })
+        .expect(201)
+        .end(() => {
+          expect(emailParams).to.exist;
+          done();
+        });
+      });
+
+      it('should return 201 without primaryEmail', done => {
+        request(app.listen())
+        .post('/api/v1/key')
+        .send({ publicKeyArmored })
         .expect(201)
         .end(() => {
           expect(emailParams).to.exist;
@@ -87,28 +101,28 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       beforeEach(done => {
         request(app.listen())
         .post('/api/v1/key')
-        .send({publicKeyArmored})
+        .send({ publicKeyArmored, primaryEmail })
         .expect(201)
         .end(done);
       });
 
       it('should return 200 for valid params', done => {
         request(app.listen())
-        .get(`/api/v1/key?op=verify&keyId=${emailParams.keyId}&nonce=${emailParams.nonce}`)
+        .get('/api/v1/key?op=verify&keyId=' + emailParams.keyId + '&nonce=' + emailParams.nonce)
         .expect(200)
         .end(done);
       });
 
       it('should return 400 for missing keyid and', done => {
         request(app.listen())
-        .get(`/api/v1/key?op=verify&nonce=${emailParams.nonce}`)
+        .get('/api/v1/key?op=verify&nonce=' + emailParams.nonce)
         .expect(400)
         .end(done);
       });
 
       it('should return 400 for missing nonce', done => {
         request(app.listen())
-        .get(`/api/v1/key?op=verify&keyId=${emailParams.keyId}`)
+        .get('/api/v1/key?op=verify&keyId=' + emailParams.keyId)
         .expect(400)
         .end(done);
       });
@@ -118,7 +132,7 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       beforeEach(done => {
         request(app.listen())
         .post('/api/v1/key')
-        .send({publicKeyArmored})
+        .send({ publicKeyArmored, primaryEmail })
         .expect(201)
         .end(done);
       });
@@ -126,7 +140,7 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       describe('Not yet verified', () => {
         it('should return 404', done => {
           request(app.listen())
-          .get(`/api/v1/key?keyId=${emailParams.keyId}`)
+          .get('/api/v1/key?keyId=' + emailParams.keyId)
           .expect(404).end(done);
         });
       });
@@ -134,21 +148,21 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       describe('Verified', () => {
         beforeEach(done => {
           request(app.listen())
-          .get(`/api/v1/key?op=verify&keyId=${emailParams.keyId}&nonce=${emailParams.nonce}`)
+          .get('/api/v1/key?op=verify&keyId=' + emailParams.keyId + '&nonce=' + emailParams.nonce)
           .expect(200)
           .end(done);
         });
 
         it('should return 200 and get key by id', done => {
           request(app.listen())
-          .get(`/api/v1/key?keyId=${emailParams.keyId}`)
+          .get('/api/v1/key?keyId=' + emailParams.keyId)
           .expect(200)
           .end(done);
         });
 
         it('should return 200 and get key email address', done => {
           request(app.listen())
-          .get(`/api/v1/key?email=${primaryEmail}`)
+          .get('/api/v1/key?email=' + primaryEmail)
           .expect(200)
           .end(done);
         });
@@ -180,21 +194,21 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       beforeEach(done => {
         request(app.listen())
         .post('/api/v1/key')
-        .send({publicKeyArmored})
+        .send({ publicKeyArmored, primaryEmail })
         .expect(201)
         .end(done);
       });
 
       it('should return 202 for key id', done => {
         request(app.listen())
-        .del(`/api/v1/key?keyId=${emailParams.keyId}`)
+        .del('/api/v1/key?keyId=' + emailParams.keyId)
         .expect(202)
         .end(done);
       });
 
       it('should return 202 for email address', done => {
         request(app.listen())
-        .del(`/api/v1/key?email=${primaryEmail}`)
+        .del('/api/v1/key?email=' + primaryEmail)
         .expect(202)
         .end(done);
       });
@@ -218,11 +232,11 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       beforeEach(done => {
         request(app.listen())
         .post('/api/v1/key')
-        .send({publicKeyArmored})
+        .send({ publicKeyArmored, primaryEmail })
         .expect(201)
-        .end(() => {
+        .end(function() {
           request(app.listen())
-          .del(`/api/v1/key?keyId=${emailParams.keyId}`)
+          .del('/api/v1/key?keyId=' + emailParams.keyId)
           .expect(202)
           .end(done);
         });
@@ -230,7 +244,7 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
 
       it('should return 200 for key id', done => {
         request(app.listen())
-        .get(`/api/v1/key?op=verifyRemove&keyId=${emailParams.keyId}&nonce=${emailParams.nonce}`)
+        .get('/api/v1/key?op=verifyRemove&keyId=' + emailParams.keyId + '&nonce=' + emailParams.nonce)
         .expect(200)
         .end(done);
       });
@@ -244,7 +258,7 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
 
       it('should return 404 for unknown key id', done => {
         request(app.listen())
-        .get(`/api/v1/key?op=verifyRemove&keyId=0123456789ABCDEF&nonce=${emailParams.nonce}`)
+        .get('/api/v1/key?op=verifyRemove&keyId=0123456789ABCDEF&nonce=' + emailParams.nonce)
         .expect(404)
         .end(done);
       });
@@ -266,7 +280,7 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
         request(app.listen())
         .post('/pks/add')
         .type('form')
-        .send(`keytext=${encodeURIComponent(publicKeyArmored)}`)
+        .send('keytext=' + encodeURIComponent(publicKeyArmored))
         .expect(201)
         .end(done);
       });
@@ -277,7 +291,7 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
         request(app.listen())
         .post('/pks/add')
         .type('form')
-        .send(`keytext=${encodeURIComponent(publicKeyArmored)}`)
+        .send('keytext=' + encodeURIComponent(publicKeyArmored))
         .expect(201)
         .end(done);
       });
@@ -285,7 +299,7 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       describe('Not yet verified', () => {
         it('should return 404', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=get&search=0x${emailParams.keyId}`)
+          .get('/pks/lookup?op=get&search=0x' + emailParams.keyId)
           .expect(404)
           .end(done);
         });
@@ -294,51 +308,51 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
       describe('Verified', () => {
         beforeEach(done => {
           request(app.listen())
-          .get(`/api/v1/key?op=verify&keyId=${emailParams.keyId}&nonce=${emailParams.nonce}`)
+          .get('/api/v1/key?op=verify&keyId=' + emailParams.keyId + '&nonce=' + emailParams.nonce)
           .expect(200)
           .end(done);
         });
 
         it('should return 200 for key id', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=get&search=0x${emailParams.keyId}`)
-          .expect(200)
+          .get('/pks/lookup?op=get&search=0x' + emailParams.keyId)
+          .expect(200, publicKeyArmored)
           .end(done);
         });
 
         it('should return 200 for fingerprint', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=get&search=0x${fingerprint}`)
-          .expect(200)
+          .get('/pks/lookup?op=get&search=0x' + fingerprint)
+          .expect(200, publicKeyArmored)
           .end(done);
         });
 
         it('should return 200 for correct email address', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=get&search=${primaryEmail}`)
-          .expect(200)
+          .get('/pks/lookup?op=get&search=' + primaryEmail)
+          .expect(200, publicKeyArmored)
           .end(done);
         });
 
         it('should return 200 for "mr" option', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=get&options=mr&search=${primaryEmail}`)
+          .get('/pks/lookup?op=get&options=mr&search=' + primaryEmail)
           .expect('Content-Type', 'application/pgp-keys; charset=utf-8')
           .expect('Content-Disposition', 'attachment; filename=openpgpkey.asc')
-          .expect(200)
+          .expect(200, publicKeyArmored)
           .end(done);
         });
 
         it('should return 200 for "vindex" op', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=vindex&search=0x${emailParams.keyId}`)
+          .get('/pks/lookup?op=vindex&search=0x' + emailParams.keyId)
           .expect(200)
           .end(done);
         });
 
         it('should return 200 for "index" with "mr" option', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=index&options=mr&search=0x${emailParams.keyId}`)
+          .get('/pks/lookup?op=index&options=mr&search=0x' + emailParams.keyId)
           .expect('Content-Type', 'text/plain; charset=utf-8')
           .expect(200)
           .end(done);
@@ -367,7 +381,7 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
 
         it('should return 501 for a invalid key id format', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=get&search=${emailParams.keyId}`)
+          .get('/pks/lookup?op=get&search=' + emailParams.keyId)
           .expect(501)
           .end(done);
         });
@@ -388,11 +402,12 @@ describe('Koa App (HTTP Server) Integration Tests', function() {
 
         it('should return 501 (Not implemented) for "x-email" op', done => {
           request(app.listen())
-          .get(`/pks/lookup?op=x-email&search=0x${emailParams.keyId}`)
+          .get('/pks/lookup?op=x-email&search=0x' + emailParams.keyId)
           .expect(501)
           .end(done);
         });
       });
     });
   });
+
 });
