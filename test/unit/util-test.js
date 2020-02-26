@@ -1,5 +1,6 @@
 'use strict';
 
+const expect = require('chai').expect;
 const util = require('../../src/service/util');
 
 describe('Util Unit Tests', () => {
@@ -116,7 +117,7 @@ describe('Util Unit Tests', () => {
       try {
         util.throw(500, 'boom');
         expect(true).to.be.false;
-      } catch (e) {
+      } catch(e) {
         expect(e.message).to.equal('boom');
         expect(e.status).to.equal(500);
         expect(e.expose).to.be.true;
@@ -136,19 +137,20 @@ describe('Util Unit Tests', () => {
 
   describe('origin', () => {
     it('should work', () => {
-      expect(util.origin({secure: true, host: 'h', protocol: 'p'})).to.exist;
+      expect(util.origin({ secure:true, host:'h', protocol:'p' })).to.exist;
     });
   });
 
   describe('url', () => {
     it('should work with resource', () => {
-      const url = util.url({host: 'localhost', protocol: 'http'}, '/foo');
+      let url = util.url({ host:'localhost', protocol:'http'}, '/foo');
       expect(url).to.equal('http://localhost/foo');
     });
 
     it('should work without resource', () => {
-      const url = util.url({host: 'localhost', protocol: 'http'});
+      let url = util.url({ host:'localhost', protocol:'http'});
       expect(url).to.equal('http://localhost');
     });
   });
+
 });

@@ -1,27 +1,24 @@
 'use strict';
 
+require('co-mocha')(require('mocha')); // monkey patch mocha for generators
+
+const expect = require('chai').expect;
 const config = require('config');
 const Email = require('../../src/email/email');
-const tpl = require('../../src/email/templates');
+const tpl = require('../../src/email/templates.json');
 
 describe('Email Integration Tests', function() {
   this.timeout(20000);
 
-  let email;
-  let keyId;
-  let userId;
-  let origin;
-  let publicKeyArmored;
+  let email, keyId, userId, origin, publicKeyArmored;
 
-  const recipient = {name: 'Test User', email: 'safewithme.testuser@gmail.com'};
+  const recipient = { name:'Test User', email:'safewithme.testuser@gmail.com' };
 
-  const ctx = {__: key => key};
-
-  before(() => {
-    publicKeyArmored = require('fs').readFileSync(`${__dirname}/../fixtures/key1.asc`, 'utf8');
+  before(function() {
+    publicKeyArmored = require('fs').readFileSync(__dirname + '/../key1.asc', 'utf8');
     origin = {
       protocol: 'http',
-      host: `localhost:${config.server.port}`
+      host: 'localhost:' + config.server.port
     };
     email = new Email();
     email.init(config.email);
@@ -37,39 +34,40 @@ describe('Email Integration Tests', function() {
     };
   });
 
-  describe('_sendHelper', () => {
-    it('should work', async () => {
-      const mailOptions = {
-        from: {name: email._sender.name, address: email._sender.email},
-        to: {name: recipient.name, address: recipient.email},
+  describe("_sendHelper", () => {
+    it('should work', function *() {
+      let mailOptions = {
+        from: email._sender,
+        to: recipient,
         subject: 'Hello ✔', // Subject line
         text: 'Hello world 🐴', // plaintext body
         html: '<b>Hello world 🐴</b>' // html body
       };
-      const info = await email._sendHelper(mailOptions);
+      let info = yield email._sendHelper(mailOptions);
       expect(info).to.exist;
     });
   });
 
-  describe('send verifyKey template', () => {
-    it('should send plaintext email', async () => {
+  describe("send verifyKey template", () => {
+    it('should send plaintext email', function *() {
       delete userId.publicKeyArmored;
-      await email.send({template: tpl.verifyKey.bind(null, ctx), userId, keyId, origin});
+      yield email.send({ template:tpl.verifyKey, userId, keyId, origin });
     });
 
-    it('should send pgp encrypted email', async () => {
-      await email.send({template: tpl.verifyKey.bind(null, ctx), userId, keyId, origin});
+    it('should send pgp encrypted email', function *() {
+      yield email.send({ template:tpl.verifyKey, userId, keyId, origin });
     });
   });
 
-  describe('send verifyRemove template', () => {
-    it('should send plaintext email', async () => {
+  describe("send verifyRemove template", () => {
+    it('should send plaintext email', function *() {
       delete userId.publicKeyArmored;
-      await email.send({template: tpl.verifyRemove.bind(null, ctx), userId, keyId, origin});
+      yield email.send({ template:tpl.verifyRemove, userId, keyId, origin });
     });
 
-    it('should send pgp encrypted email', async () => {
-      await email.send({template: tpl.verifyRemove.bind(null, ctx), userId, keyId, origin});
+    it('should send pgp encrypted email', function *() {
+      yield email.send({ template:tpl.verifyRemove, userId, keyId, origin });
     });
   });
+
 });

@@ -25,7 +25,7 @@ const crypto = require('crypto');
  * @return {boolean}   If data is a string
  */
 exports.isString = function(data) {
-  return typeof data === 'string' || String.prototype.isPrototypeOf(data); // eslint-disable-line no-prototype-builtins
+  return typeof data === 'string' || String.prototype.isPrototypeOf(data);
 };
 
 /**
@@ -37,7 +37,7 @@ exports.isTrue = function(data) {
   if (this.isString(data)) {
     return data === 'true';
   } else {
-    return Boolean(data);
+    return !!data;
   }
 };
 
@@ -79,25 +79,13 @@ exports.isEmail = function(data) {
 };
 
 /**
- * Normalize email address to lowercase.
- * @param  {string} email   The email address
- * @return {string}       lowercase email address
- */
-exports.normalizeEmail = function(email) {
-  if (email) {
-    email = email.toLowerCase();
-  }
-  return email;
-};
-
-/**
  * Create an error with a custom status attribute e.g. for http codes.
  * @param  {number} status    The error's http status code
  * @param  {string} message   The error message
  * @return {Error}            The resulting error object
  */
 exports.throw = function(status, message) {
-  const err = new Error(message);
+  let err = new Error(message);
   err.status = status;
   err.expose = true; // display message to the client
   throw err;
@@ -155,7 +143,7 @@ exports.origin = function(ctx) {
  * @return {string}            The complete url
  */
 exports.url = function(origin, resource) {
-  return `${origin.protocol}://${origin.host}${resource || ''}`;
+  return origin.protocol + '://' + origin.host + (resource || '');
 };
 
 /**

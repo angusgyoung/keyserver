@@ -25,6 +25,7 @@ const util = require('../service/util');
  * See https://tools.ietf.org/html/draft-shaw-openpgp-hkp-00
  */
 class HKP {
+
   /**
    * Create an instance of the HKP server
    * @param  {Object} publicKey   An instance of the public key service
@@ -37,13 +38,14 @@ class HKP {
    * Public key upload via http POST
    * @param  {Object} ctx   The koa request/response context
    */
-  async add(ctx) {
-    const {keytext: publicKeyArmored} = await parse.form(ctx, {limit: '1mb'});
+  *add(ctx) {
+    let body = yield parse.form(ctx, { limit: '1mb' });
+    let publicKeyArmored = body.keytext;
     if (!publicKeyArmored) {
       ctx.throw(400, 'Invalid request!');
     }
-    const origin = util.origin(ctx);
-    await this._publicKey.put({publicKeyArmored, origin}, ctx);
+    let origin = util.origin(ctx);
+    yield this._publicKey.put({ publicKeyArmored, origin });
     ctx.body = 'Upload successful. Check your inbox to verify your email address.';
     ctx.status = 201;
   }
@@ -52,11 +54,11 @@ class HKP {
    * Public key lookup via http GET
    * @param  {Object} ctx   The koa request/response context
    */
-  async lookup(ctx) {
-    const params = this.parseQueryString(ctx);
-    const key = await this._publicKey.get(params, ctx);
+  *lookup(ctx) {
+    let params = this.parseQueryString(ctx);
+    let key = yield this._publicKey.get(params);
     this.setGetHeaders(ctx, params);
-    await this.setGetBody(ctx, params, key);
+    this.setGetBody(ctx, params, key);
   }
 
   /**
@@ -66,19 +68,19 @@ class HKP {
    * @return {Object}       The query parameters or undefined for an invalid request
    */
   parseQueryString(ctx) {
-    const params = {
+    let params = {
       op: ctx.query.op, // operation ... only 'get' is supported
       mr: ctx.query.options === 'mr' // machine readable
     };
     if (this.checkId(ctx.query.search)) {
-      const id = ctx.query.search.replace(/^0x/, '');
+      let id = ctx.query.search.replace(/^0x/, '');
       params.keyId = util.isKeyId(id) ? id : undefined;
       params.fingerprint = util.isFingerPrint(id) ? id : undefined;
     } else if (util.isEmail(ctx.query.search)) {
       params.email = ctx.query.search;
     }
 
-    if (['get', 'index', 'vindex'].indexOf(params.op) === -1) {
+    if (['get','index','vindex'].indexOf(params.op) === -1) {
       ctx.throw(501, 'Not implemented!');
     } else if (!params.keyId && !params.fingerprint && !params.email) {
       ctx.throw(501, 'Not implemented!');
@@ -119,27 +121,24 @@ class HKP {
    * @param {Object} params   The parsed query string parameters
    * @param {Object} key      The public key document
    */
-  async setGetBody(ctx, params, key) {
+  setGetBody(ctx, params, key) {
     if (params.op === 'get') {
-      if (params.mr) {
-        ctx.body = key.publicKeyArmored;
-      } else {
-        await ctx.render('key-armored', {query: params, key});
-      }
-    } else if (['index', 'vindex'].indexOf(params.op) !== -1) {
-      const VERSION = 1;
-      const COUNT = 1; // number of keys
-      const fp = key.fingerprint.toUpperCase();
-      const algo = (key.algorithm.indexOf('rsa') !== -1) ? 1 : '';
-      const created = key.created ? (key.created.getTime() / 1000) : '';
+      ctx.body = key.publicKeyArmored;
+    } else if (['index','vindex'].indexOf(params.op) !== -1) {
+      const VERSION = 1, COUNT = 1; // number of keys
+      let fp = key.fingerprint.toUpperCase();
+      let algo = (key.algorithm.indexOf('rsa') !== -1) ? 1 : '';
+      let created = key.created ? (key.created.getTime() / 1000) : '';
 
-      ctx.body = `info:${VERSION}:${COUNT}\npub:${fp}:${algo}:${key.keySize}:${created}::\n`;
+      ctx.body = 'info:' + VERSION + ':' + COUNT + '\n' +
+        'pub:' + fp + ':' + algo + ':' + key.keySize + ':' + created + '::\n';
 
-      for (const uid of key.userIds) {
-        ctx.body += `uid:${encodeURIComponent(`${uid.name} <${uid.email}>`)}:::\n`;
+      for (let uid of key.userIds) {
+        ctx.body += 'uid:' + encodeURIComponent(uid.name + ' <' + uid.email + '>') + ':::\n';
       }
     }
   }
+
 }
 
 module.exports = HKP;

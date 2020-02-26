@@ -31,18 +31,13 @@ Try out the server here: [https://keys.mailvelope.com](https://keys.mailvelope.c
 
 
 
-# API
+# Api
 
-The key server provides a modern RESTful API, but is also backwards compatible to the OpenPGP HTTP Keyserver Protocol (HKP). The following properties are enforced by the key server to enable reliable automatic key look in user agents:
+The key server provides a modern RESTful api, but is also backwards compatible to the OpenPGP HTTP Keyserver Protocol (HKP).
 
-* Only public keys with at least one verified email address are served
-* There can be only one public key per verified email address at a given time
-* A key ID specified in a query must be at least 16 hex characters (64-bit long key ID)
-* Key ID collisions are checked upon key upload to prevent collision attacks
+## HKP api
 
-## HKP API
-
-The HKP APIs are not documented here. Please refer to the [HKP specification](https://tools.ietf.org/html/draft-shaw-openpgp-hkp-00) to learn more. The server generally implements the full specification, but has some constraints to improve the security for automatic key lookup:
+The HKP apis are not documented here. Please refer to the [HKP specification](https://tools.ietf.org/html/draft-shaw-openpgp-hkp-00) to learn more. The server generally implements the full specification, but has some constraints to improve the security for automatic key lookup:
 
 #### Accepted `search` parameters
 * Email addresses
@@ -57,7 +52,7 @@ The HKP APIs are not documented here. Please refer to the [HKP specification](ht
 #### Accepted `options` parameters
 * mr
 
-## REST API
+## REST api
 
 ### Lookup a key
 
@@ -124,11 +119,13 @@ POST /api/v1/key
 
 ```json
 {
-  "publicKeyArmored": "-----BEGIN PGP PUBLIC KEY BLOCK----- ... -----END PGP PUBLIC KEY BLOCK-----"
+  "publicKeyArmored": "-----BEGIN PGP PUBLIC KEY BLOCK----- ... -----END PGP PUBLIC KEY BLOCK-----",
+  "primaryEmail": "user@example.com"
 }
 ```
 
 * **publicKeyArmored**: The ascii armored public PGP key to be uploaded
+* **primaryEmail (optional)**: The ascii armored block is parsed to check for user ids, so this parameter is purely optional. Normally a verification email is sent to every user id found in the pgp key. To prevent this behaviour, user agents can specify the user's primary email address to send out only one email.
 
 
 ### Verify uploaded key (via link in email)
@@ -153,7 +150,7 @@ GET /api/v1/key?op=verifyRemove&keyId=b8e4105cc9dedc77&nonce=6a314915c09368224b1
 
 # Development
 
-The server is written is in JavaScript ES7 and runs on [Node.js](https://nodejs.org/) v8+. It uses [MongoDB](https://www.mongodb.com/) v3.2+ as its database.
+The server is written is in JavaScript ES6 and runs on [Node.js](https://nodejs.org/) v4+. It uses [MongoDB](https://www.mongodb.com/) v2.4+ as its database.
 
 ## Install Node.js (Mac OS)
 
