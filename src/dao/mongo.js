@@ -17,7 +17,6 @@
 
 'use strict';
 
-const MongoClient = require('mongodb').MongoClient;
 const { connect } = require('./initConnection');
 
 /**
@@ -35,7 +34,7 @@ class Mongo {
     console.log(uri);
     connect(uri).then(db => {
       this._db = db;
-      console.log('Connected', this._db);
+      console.log('Connected to MongoDB');
     });
   }
 
